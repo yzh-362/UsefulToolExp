@@ -1,0 +1,1087 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>综合实验数据与谱图分析系统 (Web 端)</title>
+    <!-- 引入 SheetJS 用于解析 Excel 文件 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- 引入 JSZip 用于视频抽帧的内存打包下载 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- 引入 Plotly.js 用于绘制高精度频谱图 -->
+    <script src="https://cdn.plot.ly/plotly-2.24.2.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: #f5f6f8; color: #333; line-height: 1.5;
+            height: 100vh; overflow: hidden; display: flex; flex-direction: column;
+        }
+        .container { 
+            max-width: 1600px; width: 100%; height: 100%; margin: 0 auto; 
+            padding: 20px; display: flex; flex-direction: column; 
+        }
+        .header { 
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid #ccc; 
+            flex-shrink: 0;
+        }
+        .tabs { display: flex; gap: 5px; margin-bottom: 15px; flex-shrink: 0; border-bottom: 2px solid #e9ecef; }
+        .tab-btn {
+            padding: 10px 20px; cursor: pointer; border: 1px solid transparent; 
+            background: #f8f9fa; border-radius: 4px 4px 0 0; font-weight: 500;
+        }
+        .tab-btn.active { background: #fff; border-color: #ccc; border-bottom-color: #fff; margin-bottom: -2px; }
+        
+        .main-content { display: flex; flex: 1; min-height: 0; background: #fff; border: 1px solid #ccc; border-radius: 4px; padding: 20px; overflow-y: auto; }
+        .tab-panel { display: none; width: 100%; flex-direction: column; gap: 20px; }
+        .tab-panel.active { display: flex; }
+
+        /* TableConvert Specific Styles */
+        .control-group { display: flex; gap: 15px; align-items: center; flex-wrap: wrap; background: #e9ecef; padding: 15px; border-radius: 4px;}
+        .control-group label { font-weight: bold; font-size: 0.9em; min-width: 100px;}
+        .control-group input[type="text"] { flex: 1; min-width: 200px; padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-family: monospace; }
+        .file-upload-wrapper { position: relative; overflow: hidden; display: inline-block; }
+        .file-upload-wrapper input[type="file"] { font-size: 100px; position: absolute; left: 0; top: 0; opacity: 0; cursor: pointer; height: 100%; }
+        .btn { padding: 8px 15px; background-color: #0056b3; color: white; border: none; border-radius: 4px; font-size: 14px; cursor: pointer; font-weight: bold;}
+        .btn:hover { background-color: #004494; }
+        .btn-success { background-color: #28a745; }
+        .btn-success:hover { background-color: #218838; }
+        
+        .code-output { 
+            flex: 1; width: 100%; background: #2b2b2b; color: #a9b7c6; 
+            font-family: 'Consolas', 'Courier New', monospace; font-size: 14px;
+            padding: 15px; border-radius: 4px; border: none; resize: none;
+            white-space: pre; overflow-wrap: normal; overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>综合实验数据与谱图分析系统 (纯前端架构)</h2>
+        </div>
+        
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('table-convert')">Excel 转 Typst 表格</button>
+            <button class="tab-btn" onclick="switchTab('scatter-batch')">多文件叠加与并发分析 (筹备中)</button>
+            <button class="tab-btn" onclick="switchTab('fft-analysis')">FFT 频谱分析系统 (筹备中)</button>
+            <button class="tab-btn" onclick="switchTab('mov-extract')">视频逐帧提取 (筹备中)</button>
+        </div>
+        
+        <div class="main-content">
+            <!-- 模块 1: Excel 转 Typst -->
+            <div id="table-convert" class="tab-panel active">
+                <h3>TableConvert: 数据表转化引擎</h3>
+                <div class="control-group">
+                    <label>英文字体 (FONT_EN):</label>
+                    <input type="text" id="cfg-font-en" value="Times New Roman">
+                    <label>中文字体 (FONT_ZH):</label>
+                    <input type="text" id="cfg-font-zh" value="Microsoft YaHei">
+                </div>
+                <div class="control-group">
+                    <label>字号 (FONT_SIZE):</label>
+                    <input type="text" id="cfg-font-size" value="9pt">
+                    <label>高亮行号 (Tuple格式):</label>
+                    <input type="text" id="cfg-highlight" value="(11,)">
+                </div>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <div class="file-upload-wrapper">
+                        <button class="btn">载入 Excel 文件 (.xlsx / .csv)</button>
+                        <input type="file" id="excel-file-input" accept=".xlsx, .xls, .csv">
+                    </div>
+                    <span id="file-name-display" style="font-size: 14px; color: #666;">未选择文件</span>
+                    <button class="btn btn-success" id="copy-btn" onclick="copyToClipboard()" style="margin-left: auto;">复制 Typst 代码</button>
+                </div>
+                <textarea id="typst-output" class="code-output" readonly placeholder="Typst 代码将在此处生成..."></textarea>
+            </div>
+
+            <!-- 模块 2: 多序列并发分析 -->
+            <div id="scatter-batch" class="tab-panel">
+                <h3>多文件叠加与并发分析 (光谱/散射数据)</h3>
+                <div class="control-group">
+                    <button class="btn" onclick="document.getElementById('scatter-file-input').click()">导入多个数据文件</button>
+                    <input type="file" id="scatter-file-input" style="display:none" accept=".csv,.txt,.dat" multiple>
+                    <button class="btn btn-success" id="btn-scatter-process" onclick="scatterProcess()" disabled>基线扣除 & 平滑</button>
+                    <label>平滑窗口:</label>
+                    <input type="number" id="cfg-smooth-window" value="5" style="min-width: 60px;">
+                    <label>基线迭代(SNIP):</label>
+                    <input type="number" id="cfg-baseline-iter" value="100" style="min-width: 60px;">
+                    <button class="btn" id="btn-scatter-peaks" onclick="scatterFindPeaks()" style="background-color: #6f42c1;" disabled>自动寻峰 & 积分</button>
+                    <label>寻峰阈值:</label>
+                    <input type="number" id="cfg-peak-thresh" value="0.1" step="0.1" style="min-width: 60px;">
+                    <button class="btn" id="btn-scatter-clear" onclick="scatterClearCustom()" style="background-color: #dc3545;" disabled>清除手动框选</button>
+                </div>
+                <div id="scatter-status" style="font-family: 'Consolas', 'Courier New', monospace; font-size: 14px; margin-top: 5px; padding: 10px; background: #e9ecef; border-radius: 4px;">等待导入数据... 支持多选两列格式的 .csv / .txt 文件。提示：在图表上横向拖拽框选可直接进行手动局部积分。</div>
+                <div style="display: flex; gap: 20px; margin-top: 10px; height: 500px;">
+                    <div id="scatter-chart-container" style="flex: 3; border: 1px solid #eee; border-radius: 4px;"></div>
+                    <div style="flex: 1; display: flex; flex-direction: column; gap: 10px;">
+                        <textarea id="scatter-output" class="code-output" readonly placeholder="数据处理与分析报告将在此处生成..." style="flex: 1; height: auto;"></textarea>
+                        <button class="btn" onclick="copyScatterOutput()">复制分析报告</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 模块 3: FFT 分析系统 -->
+            <div id="fft-analysis" class="tab-panel">
+                <h3>多维度多模态高精度频谱分析系统 (纯前端运算架构)</h3>
+                <div class="control-group">
+                    <button class="btn" id="fft-btn-load" onclick="document.getElementById('fft-file-input').click()">导入外部数据文件</button>
+                    <input type="file" id="fft-file-input" style="display:none" accept=".wav,.csv,.dat,.bin">
+                    <button class="btn" id="fft-btn-generate" onclick="fftGenerateData()">生成系统校准数据</button>
+                    <label>默认采样率(Hz):</label>
+                    <input type="number" id="fft-cfg-sr" value="2000" style="min-width: 80px;">
+                    <label>分析模态:</label>
+                    <select id="fft-cfg-mode" style="padding: 6px; border-radius: 3px; border: 1px solid #ccc;">
+                        <option value="FAST">动态快响应模式</option>
+                        <option value="HIGH_PRECISION">静态高精度模式</option>
+                    </select>
+                    <button class="btn btn-success" id="fft-btn-start" onclick="fftStartAnalysis()" disabled>启动分析序列</button>
+                    <button class="btn" id="fft-btn-stop" onclick="fftStopAnalysis()" style="background-color: #dc3545;" disabled>中止</button>
+                </div>
+                <div id="fft-status-label" style="font-family: 'Consolas', 'Courier New', monospace; font-size: 14px; margin-top: 5px; padding: 10px; background: #e9ecef; border-radius: 4px; overflow-x: auto; white-space: pre-wrap;">系统就绪。请导入包含 time 及独立通道属性的 csv 文件。</div>
+                <div id="fft-chart-container" style="flex: 1; width: 100%; min-height: 450px; border: 1px solid #eee; border-radius: 4px; margin-top: 5px;"></div>
+            </div>
+
+            <!-- 模块 4: 视频抽帧工具 -->
+            <div id="mov-extract" class="tab-panel">
+                <h3>视频定距抽帧工具</h3>
+                <div class="control-group">
+                    <label>时间间隔 (秒):</label>
+                    <input type="number" id="cfg-interval" value="30.0" step="0.1" min="0.1">
+                </div>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <div class="file-upload-wrapper">
+                        <button class="btn">载入视频文件</button>
+                        <input type="file" id="video-file-input" accept="video/*">
+                    </div>
+                    <span id="video-name-display" style="font-size: 14px; color: #666;">未选择视频</span>
+                    <button class="btn btn-success" id="extract-btn" onclick="startExtraction()" style="margin-left: auto;" disabled>开始提取</button>
+                </div>
+                <div style="margin-top: 15px;">
+                    <label style="font-weight: bold; display: block; margin-bottom: 5px;">提取进度:</label>
+                    <div style="width: 100%; background-color: #e9ecef; border-radius: 4px; overflow: hidden; height: 20px;">
+                        <div id="extract-progress-bar" style="width: 0%; height: 100%; background-color: #28a745; transition: width 0.2s;"></div>
+                    </div>
+                    <span id="extract-status" style="font-size: 14px; color: #333; margin-top: 5px; display: inline-block;">等待开始...</span>
+                </div>
+                <!-- 隐藏的 video 和 canvas 用于处理帧数据 -->
+                <video id="hidden-video" style="display: none;" muted playsinline></video>
+                <canvas id="hidden-canvas" style="display: none;"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Tab 切换逻辑
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-panel').forEach(panel => panel.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.getElementById(tabId).classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        // --- TableConvert 模块核心逻辑 ---
+        
+        // Typst 特殊字符转义规则 (严格复刻 Python 逻辑)
+        function escapeTypst(text) {
+            if (text === null || text === undefined) return "";
+            let str = String(text);
+            const chars = [
+                ['\\', '\\\\'], ['#', '\\#'], ['$', '\\$'], ['*', '\\*'], 
+                ['_', '\\_'], ['`', '\\`'], ['<', '\\<'], ['>', '\\>'], ['@', '\\@']
+            ];
+            for (let i = 0; i < chars.length; i++) {
+                // 使用 split 和 join 实现全局替换，避免正则特殊字符冲突
+                str = str.split(chars[i][0]).join(chars[i][1]);
+            }
+            return str;
+        }
+
+        document.getElementById('excel-file-input').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            document.getElementById('file-name-display').textContent = file.name;
+            const reader = new FileReader();
+            
+            reader.onload = function(event) {
+                try {
+                    const data = new Uint8Array(event.target.result);
+                    const workbook = XLSX.read(data, {type: 'array'});
+                    
+                    // 获取第一张表
+                    const firstSheetName = workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[firstSheetName];
+                    
+                    // 转换为二维数组 (对应 pandas df)
+                    const jsonArr = XLSX.utils.sheet_to_json(worksheet, {header: 1, defval: ""});
+                    
+                    if (jsonArr.length === 0) {
+                        alert("表格数据为空");
+                        return;
+                    }
+
+                    // 提取局部配置
+                    const fontEn = document.getElementById('cfg-font-en').value;
+                    const fontZh = document.getElementById('cfg-font-zh').value;
+                    const fontSize = document.getElementById('cfg-font-size').value;
+                    const highlightRows = document.getElementById('cfg-highlight').value;
+
+                    // 计算有效列数
+                    let maxCols = 0;
+                    for (let i = 0; i < jsonArr.length; i++) {
+                        if (jsonArr[i].length > maxCols) maxCols = jsonArr[i].length;
+                    }
+                    const colCount = maxCols;
+
+                    // 1. 预处理所有单元格内容，适配 academic-table 阵列参数
+                    const headersArr = [];
+                    const headers = jsonArr[0];
+                    for (let i = 0; i < colCount; i++) {
+                        let name = headers[i] !== undefined ? String(headers[i]).trim() : "";
+                        if (name.includes("Unnamed:")) name = "";
+                        headersArr.push(`[*${escapeTypst(name)}*]`);
+                    }
+                    // 确保单列元素时附加逗号以符合 Typst 一维数组规范
+                    const headersStr = `(${headersArr.join(", ")}${headersArr.length === 1 ? ',' : ''})`;
+
+                    const rowsArr = [];
+                    for (let i = 1; i < jsonArr.length; i++) {
+                        const row = jsonArr[i];
+                        // 过滤纯空行逻辑 (dropna how='all')
+                        let isEmptyRow = true;
+                        for (let j = 0; j < colCount; j++) {
+                            if (row[j] !== "" && row[j] !== undefined && row[j] !== null) {
+                                isEmptyRow = false;
+                                break;
+                            }
+                        }
+                        if (isEmptyRow) continue;
+
+                        const rowCells = [];
+                        for (let j = 0; j < colCount; j++) {
+                            const cellValue = row[j] !== undefined ? row[j] : "";
+                            rowCells.push(`[${escapeTypst(cellValue)}]`);
+                        }
+                        rowsArr.push(`    (${rowCells.join(", ")}${rowCells.length === 1 ? ',' : ''})`);
+                    }
+                    // 确保单行元素时附加逗号以符合 Typst 二维数组规范
+                    const rowsStr = `(\n${rowsArr.join(",\n")}${rowsArr.length === 1 ? ',' : ''}\n  )`;
+
+                    const shouldFlip = colCount > 6;
+                    
+                    // 2. 注入 academic-table 模板并生成最终 Typst 代码
+                    const typstCode = `#let academic-table(
+  caption: none,
+  columns: auto,
+  fill: none,
+  headers: (),
+  rows: (),
+  footer: ()
+) = {
+  let h-rows = if headers.len() > 0 { 1 } else { 0 }
+  
+  let formatted-rows = if rows.len() > 0 and type(rows.at(0)) != array {
+    (rows,)
+  } else {
+    rows
+  }
+  
+  let formatted-footer = if footer.len() > 0 and type(footer.at(0)) != array {
+    (footer,)
+  } else {
+    footer
+  }
+  
+  let r-rows = formatted-rows.len()
+  let f-rows = formatted-footer.len()
+  
+  let table-items = ()
+  
+  table-items.push(table.hline(y: 0, stroke: 1.5pt + black))
+  
+  if h-rows > 0 {
+    table-items += headers
+    table-items.push(table.hline(y: 1, stroke: 0.5pt + black))
+  }
+  
+  for row in formatted-rows {
+    table-items += row
+  }
+  
+  if f-rows > 0 {
+    table-items.push(table.hline(y: h-rows + r-rows, stroke: 0.5pt + black))
+    for f-row in formatted-footer {
+      table-items += f-row
+    }
+  }
+  
+  table-items.push(table.hline(y: h-rows + r-rows + f-rows, stroke: 1.5pt + black))
+  
+  figure(
+    caption: caption,
+    table(
+      columns: columns,
+      stroke: none,
+      align: center + horizon,
+      fill: fill,
+      ..table-items
+    )
+  )
+}
+
+#[
+  #set text(font: ("${fontEn}", "${fontZh}"), size: ${fontSize})
+  
+  #let tbl = academic-table(
+    columns: (auto,) * ${colCount},
+    fill: (x, y) => {
+      if y == 0 { gray.lighten(80%) }
+      else if y in ${highlightRows} { blue.lighten(90%) }
+    },
+    headers: ${headersStr},
+    rows: ${rowsStr}
+  )
+
+  ${shouldFlip ? "#page(flipped: true, margin: 1cm)[#tbl]" : "#tbl"}
+]`;
+
+                    document.getElementById('typst-output').value = typstCode.trim();
+                } catch (error) {
+                    alert("文件解析错误: " + error.message);
+                }
+            };
+            
+            reader.readAsArrayBuffer(file);
+        });
+
+        function copyToClipboard() {
+            const outputArea = document.getElementById('typst-output');
+            if (!outputArea.value) {
+                alert("没有可复制的内容。");
+                return;
+            }
+            outputArea.select();
+            document.execCommand('copy');
+            const btn = document.getElementById('copy-btn');
+            const originalText = btn.textContent;
+            btn.textContent = "已复制！";
+            setTimeout(() => { btn.textContent = originalText; }, 2000);
+        }
+
+        // --- MOV2JPG 模块核心逻辑 ---
+        
+        let selectedVideoFile = null;
+
+        document.getElementById('video-file-input').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            selectedVideoFile = file;
+            document.getElementById('video-name-display').textContent = file.name;
+            document.getElementById('extract-btn').disabled = false;
+            document.getElementById('extract-status').textContent = '视频已就绪，等待提取...';
+            document.getElementById('extract-progress-bar').style.width = '0%';
+        });
+
+        async function startExtraction() {
+            if (!selectedVideoFile) return;
+
+            const intervalSeconds = parseFloat(document.getElementById('cfg-interval').value);
+            if (isNaN(intervalSeconds) || intervalSeconds <= 0) {
+                alert("请输入有效的时间间隔（必须为大于0的数字）。");
+                return;
+            }
+
+            const btn = document.getElementById('extract-btn');
+            const statusText = document.getElementById('extract-status');
+            const progressBar = document.getElementById('extract-progress-bar');
+            const video = document.getElementById('hidden-video');
+            const canvas = document.getElementById('hidden-canvas');
+            const ctx = canvas.getContext('2d');
+
+            btn.disabled = true;
+            statusText.textContent = '正在解析视频元数据...';
+
+            const videoURL = URL.createObjectURL(selectedVideoFile);
+            video.src = videoURL;
+
+            try {
+                await new Promise((resolve, reject) => {
+                    video.onloadedmetadata = () => resolve();
+                    video.onerror = () => reject(new Error("视频加载失败或格式不受支持。"));
+                });
+            } catch (error) {
+                alert(error.message);
+                btn.disabled = false;
+                URL.revokeObjectURL(videoURL);
+                return;
+            }
+
+            const duration = video.duration;
+            if (!duration || !isFinite(duration)) {
+                alert("无法获取视频总时长。");
+                btn.disabled = false;
+                URL.revokeObjectURL(videoURL);
+                return;
+            }
+
+            // 同步视频物理分辨率至 Canvas
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+
+            const zip = new JSZip();
+            const folderName = selectedVideoFile.name.replace(/\.[^/.]+$/, "") + "_frames";
+            const imgFolder = zip.folder(folderName);
+
+            let currentTime = 0;
+            let savedCount = 0;
+            const totalFramesEstimate = Math.floor(duration / intervalSeconds) + 1;
+
+            statusText.textContent = `开始提取，预计提取 ${totalFramesEstimate} 帧...`;
+
+            for (currentTime = 0; currentTime < duration; currentTime += intervalSeconds) {
+                video.currentTime = currentTime;
+
+                // 等待浏览器完成视频帧渲染
+                await new Promise((resolve) => {
+                    const onSeeked = () => {
+                        video.removeEventListener('seeked', onSeeked);
+                        resolve();
+                    };
+                    video.addEventListener('seeked', onSeeked);
+                });
+
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+                // 将 Canvas 转换为 JPEG Blob
+                const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.95));
+
+                const frameNumberStr = String(savedCount).padStart(6, '0');
+                imgFolder.file(`frame_${frameNumberStr}.jpg`, blob);
+
+                savedCount++;
+
+                const progressPercent = Math.min(100, Math.round((currentTime / duration) * 100));
+                progressBar.style.width = `${progressPercent}%`;
+                statusText.textContent = `正在提取: 已截取 ${savedCount} / ${totalFramesEstimate} 帧 (${progressPercent}%)`;
+            }
+
+            statusText.textContent = '提取完成，正在执行文件压缩打包...';
+            progressBar.style.width = '100%';
+
+            // 生成 ZIP 文件并执行浏览器端下载
+            const zipContent = await zip.generateAsync({ type: "blob" });
+            const downloadLink = document.createElement('a');
+            downloadLink.href = URL.createObjectURL(zipContent);
+            downloadLink.download = `${folderName}.zip`;
+            document.body.appendChild(downloadLink);
+            downloadLink.click();
+            document.body.removeChild(downloadLink);
+
+            URL.revokeObjectURL(videoURL);
+            statusText.textContent = `帧提取过程完成。共提取并保存了 ${savedCount} 帧。`;
+            btn.disabled = false;
+        }
+
+        // --- Scatter & Batch 模块核心逻辑 ---
+        let scatterDatasets = [];
+        
+        document.getElementById('scatter-file-input').addEventListener('change', async function(e) {
+            const files = e.target.files;
+            if (!files || files.length === 0) return;
+            
+            scatterDatasets = [];
+            document.getElementById('scatter-status').textContent = `正在解析 ${files.length} 个文件...`;
+            
+            for(let i = 0; i < files.length; i++) {
+                const file = files[i];
+                const text = await file.text();
+                // 支持不同操作系统的换行符
+                const lines = text.split(/\r?\n/).filter(l => l.trim() !== '');
+                
+                let x = [], y = [];
+                lines.forEach(line => {
+                    // 使用正则支持逗号、制表符、多空格等复杂分隔符
+                    const parts = line.trim().split(/[\s,]+/); 
+                    if(parts.length >= 2) {
+                        const px = parseFloat(parts[0]);
+                        const py = parseFloat(parts[1]);
+                        if(!isNaN(px) && !isNaN(py)) {
+                            x.push(px);
+                            y.push(py);
+                        }
+                    }
+                });
+                
+                if(x.length > 0) {
+                    scatterDatasets.push({
+                        name: file.name,
+                        x: x,
+                        y_raw: y,
+                        y_smooth: null,
+                        y_base: null,
+                        y_corr: null,
+                        peaks: [],
+                        custom_areas: []
+                    });
+                }
+            }
+            
+            document.getElementById('scatter-status').textContent = `已成功解析 ${scatterDatasets.length} 个数据序列。提示：在图表上横向拖拽框选可直接进行手动局部积分。`;
+            if(scatterDatasets.length > 0) {
+                document.getElementById('btn-scatter-process').disabled = false;
+                document.getElementById('btn-scatter-clear').disabled = false;
+                renderScatterChart('raw');
+            }
+        });
+
+        // SNIP (Statistics-sensitive Non-linear Iterative Peak-clipping) 算法求基线
+        function snipBaseline(y, iter_max) {
+            let base = new Float64Array(y);
+            for (let p = 1; p <= iter_max; p++) {
+                let temp = new Float64Array(base.length);
+                for (let i = 0; i < base.length; i++) {
+                    if (i >= p && i < base.length - p) {
+                        temp[i] = Math.min(base[i], (base[i-p] + base[i+p]) / 2.0);
+                    } else {
+                        temp[i] = base[i];
+                    }
+                }
+                base = temp;
+            }
+            return Array.from(base);
+        }
+
+        // 简单移动平均平滑 (替代 scipy.signal.savgol_filter)
+        function movingAverage(y, window_size) {
+            let smoothed = new Float64Array(y.length);
+            let half = Math.floor(window_size / 2);
+            for (let i = 0; i < y.length; i++) {
+                let sum = 0, count = 0;
+                for (let j = Math.max(0, i - half); j <= Math.min(y.length - 1, i + half); j++) {
+                    sum += y[j]; count++;
+                }
+                smoothed[i] = sum / count;
+            }
+            return Array.from(smoothed);
+        }
+
+        function scatterProcess() {
+            const wSize = parseInt(document.getElementById('cfg-smooth-window').value) || 5;
+            const bIter = parseInt(document.getElementById('cfg-baseline-iter').value) || 100;
+            
+            document.getElementById('scatter-status').textContent = `正在执行降噪与 SNIP 基线迭代算法...`;
+            
+            scatterDatasets.forEach(ds => {
+                ds.y_smooth = movingAverage(ds.y_raw, wSize);
+                ds.y_base = snipBaseline(ds.y_smooth, bIter);
+                ds.y_corr = ds.y_smooth.map((val, idx) => val - ds.y_base[idx]);
+            });
+            
+            document.getElementById('scatter-status').textContent = `基线校准完成。已切换至校准后视图。`;
+            document.getElementById('btn-scatter-peaks').disabled = false;
+            renderScatterChart('corr');
+        }
+
+        function scatterClearCustom() {
+            scatterDatasets.forEach(ds => ds.custom_areas = []);
+            updateScatterReport();
+            renderScatterChart(currentScatterMode);
+        }
+
+        function updateScatterReport() {
+            let report = "=== 多序列寻峰与积分分析报告 ===\n\n";
+            scatterDatasets.forEach(ds => {
+                if(!ds.y_corr && ds.peaks.length === 0 && ds.custom_areas.length === 0) return;
+                report += `【文件】 ${ds.name}\n`;
+                
+                if (ds.peaks.length > 0) {
+                    report += `  -- 自动寻峰 --\n`;
+                    ds.peaks.forEach((p, idx) => {
+                        report += `  [峰 ${idx + 1}] X: ${p.x.toFixed(4)} | 幅值: ${p.y.toFixed(4)} | 面积: ${p.area.toFixed(4)}\n`;
+                    });
+                }
+                
+                if (ds.custom_areas.length > 0) {
+                    report += `  -- 手动积分区域 --\n`;
+                    ds.custom_areas.forEach((c, idx) => {
+                        report += `  [区域 ${idx + 1}] 范围: ${c.xmin.toFixed(2)}~${c.xmax.toFixed(2)} | 面积: ${c.area.toFixed(4)}\n`;
+                    });
+                }
+                
+                if (ds.peaks.length === 0 && ds.custom_areas.length === 0) {
+                    report += `  (无特征数据)\n`;
+                }
+                report += "\n";
+            });
+            document.getElementById('scatter-output').value = report;
+        }
+
+        function scatterFindPeaks() {
+            const threshold = parseFloat(document.getElementById('cfg-peak-thresh').value) || 0.1;
+            
+            scatterDatasets.forEach(ds => {
+                if(!ds.y_corr) return;
+                ds.peaks = [];
+                let y = ds.y_corr;
+                let x = ds.x;
+                
+                let candidates = [];
+                // 基于一阶微分的局部极大值寻峰算法
+                for(let i = 1; i < y.length - 1; i++) {
+                    if(y[i] > y[i-1] && y[i] > y[i+1] && y[i] > threshold) {
+                        candidates.push(i);
+                    }
+                }
+                
+                // 引入极值距离非极大值抑制(NMS)，避免噪声导致的密集峰
+                const minDistance = Math.max(10, Math.floor(y.length / 500)); 
+                let validPeaks = [];
+                candidates.sort((a, b) => y[b] - y[a]);
+                candidates.forEach(idx => {
+                    let isIsolated = true;
+                    for(let v of validPeaks) {
+                        if(Math.abs(idx - v) < minDistance) { isIsolated = false; break; }
+                    }
+                    if(isIsolated) validPeaks.push(idx);
+                });
+                validPeaks.sort((a, b) => a - b);
+                
+                validPeaks.forEach(i => {
+                    let left = i;
+                    while(left > 0 && y[left] > 0 && y[left-1] < y[left]) left--;
+                    let right = i;
+                    while(right < y.length - 1 && y[right] > 0 && y[right+1] < y[right]) right++;
+                    
+                    let area = 0;
+                    for(let j = left; j < right; j++) {
+                        area += (y[j] + y[j+1]) * (x[j+1] - x[j]) / 2.0;
+                    }
+                    
+                    ds.peaks.push({ idx: i, x: x[i], y: y[i], area: Math.abs(area) });
+                });
+            });
+            
+            updateScatterReport();
+            document.getElementById('scatter-status').textContent = `智能寻峰与积分计算完毕。`;
+            renderScatterChart('peaks');
+        }
+
+        let currentScatterMode = 'raw';
+
+        function renderScatterChart(mode) {
+            currentScatterMode = mode;
+            const chartDiv = document.getElementById('scatter-chart-container');
+            let plotData = [];
+            let annotations = [];
+            
+            scatterDatasets.forEach((ds, idx) => {
+                let yData = mode === 'raw' ? ds.y_raw : ds.y_corr;
+                if (!yData) return;
+                
+                // 主信号曲线
+                plotData.push({
+                    x: ds.x, y: yData, type: 'scatter', mode: 'lines', name: ds.name,
+                    line: { width: 1.5 }
+                });
+                
+                // 叠加标记被找到的自动峰值
+                if(mode === 'peaks' && ds.peaks.length > 0) {
+                    plotData.push({
+                        x: ds.peaks.map(p => p.x),
+                        y: ds.peaks.map(p => p.y),
+                        type: 'scatter', mode: 'markers', name: `${ds.name} [自动峰值]`,
+                        marker: { size: 8, symbol: 'cross', color: '#dc3545' }
+                    });
+                }
+                
+                // 渲染手动框选的区域与面积文本
+                if (ds.custom_areas && ds.custom_areas.length > 0) {
+                    ds.custom_areas.forEach((areaData, aIdx) => {
+                        let fillX = areaData.x_sel.concat(areaData.x_sel.slice().reverse());
+                        let fillY = areaData.y_sel.concat(Array(areaData.x_sel.length).fill(areaData.base_val));
+                        
+                        plotData.push({
+                            x: fillX, y: fillY, type: 'scatter', mode: 'lines',
+                            fill: 'toself', fillcolor: 'rgba(40, 167, 69, 0.3)',
+                            line: { color: 'transparent' },
+                            name: `${ds.name} [自选区域]`, showlegend: false, hoverinfo: 'skip'
+                        });
+                        
+                        let midX = (areaData.xmin + areaData.xmax) / 2;
+                        let maxY = Math.max(...areaData.y_sel);
+                        annotations.push({
+                            x: midX, y: maxY, text: areaData.area.toFixed(2),
+                            showarrow: true, arrowhead: 2, ax: 0, ay: -30,
+                            font: { color: '#28a745', weight: 'bold' }
+                        });
+                    });
+                }
+            });
+            
+            const layout = {
+                title: mode === 'raw' ? "原始序列叠加对比" : "基线校准与特征识别",
+                xaxis: { title: "X 坐标轴", gridcolor: '#eee' },
+                yaxis: { title: "相对强度 / 幅值", gridcolor: '#eee' },
+                margin: { l: 60, r: 20, t: 40, b: 40 },
+                plot_bgcolor: '#fff', paper_bgcolor: '#fff',
+                showlegend: true,
+                dragmode: 'select',
+                selectdirection: 'h',
+                annotations: annotations
+            };
+            
+            Plotly.newPlot(chartDiv, plotData, layout, {responsive: true, displaylogo: false});
+            
+            chartDiv.removeAllListeners('plotly_selected');
+            chartDiv.on('plotly_selected', function(eventData) {
+                if(!eventData || !eventData.range) return;
+                let xmin = eventData.range.x[0];
+                let xmax = eventData.range.x[1];
+                if(xmin > xmax) { let temp = xmin; xmin = xmax; xmax = temp; }
+
+                scatterDatasets.forEach(ds => {
+                    let yData = (currentScatterMode === 'raw' || !ds.y_corr) ? ds.y_raw : ds.y_corr;
+                    if (!yData) return;
+                    
+                    let x_sel = [], y_sel = [];
+                    for(let i=0; i<ds.x.length; i++) {
+                        if(ds.x[i] >= xmin && ds.x[i] <= xmax) {
+                            x_sel.push(ds.x[i]);
+                            y_sel.push(yData[i]);
+                        }
+                    }
+                    if(x_sel.length > 1) {
+                        let base_val = Math.min(...yData);
+                        let area = 0;
+                        for(let j = 0; j < x_sel.length - 1; j++) {
+                            let y1 = Math.max(0, y_sel[j] - base_val);
+                            let y2 = Math.max(0, y_sel[j+1] - base_val);
+                            area += (y1 + y2) * (x_sel[j+1] - x_sel[j]) / 2.0;
+                        }
+                        ds.custom_areas.push({ xmin, xmax, base_val, area, x_sel, y_sel });
+                    }
+                });
+                
+                updateScatterReport();
+                renderScatterChart(currentScatterMode);
+            });
+        }
+
+        function copyScatterOutput() {
+            const out = document.getElementById('scatter-output');
+            out.select();
+            document.execCommand('copy');
+        }
+
+        // --- FFT 模块核心逻辑 ---
+
+        let fftCurrentData = null; // 存储二维通道数据 [channels][samples]
+        let fftSampleRate = 2000.0;
+        let fftChannelNames = [];
+        let fftWorker = null;
+
+        // 生成双精度基准校验数据
+        function fftGenerateData() {
+            const srInput = parseFloat(document.getElementById('fft-cfg-sr').value);
+            fftSampleRate = isNaN(srInput) ? 2000.0 : srInput;
+            const duration = 10;
+            const length = Math.floor(fftSampleRate * duration);
+            
+            const ch1 = new Float64Array(length);
+            const ch2 = new Float64Array(length);
+            
+            for (let i = 0; i < length; i++) {
+                const t = i / fftSampleRate;
+                // 通道 1: 50Hz + 120Hz + 噪声
+                ch1[i] = Math.sin(2 * Math.PI * 50 * t) + 0.5 * Math.sin(2 * Math.PI * 120 * t) + 0.1 * (Math.random() * 2 - 1);
+                // 通道 2: 80Hz + 200Hz + 噪声
+                ch2[i] = Math.sin(2 * Math.PI * 80 * t) + 0.3 * Math.sin(2 * Math.PI * 200 * t) + 0.1 * (Math.random() * 2 - 1);
+            }
+            
+            fftCurrentData = [ch1, ch2];
+            fftChannelNames = ["Ch1_50Hz_120Hz", "Ch2_80Hz_200Hz"];
+            
+            document.getElementById('fft-status-label').textContent = `校验数据生成完毕 | 采样率: ${fftSampleRate} Hz | 通道数: 2`;
+            document.getElementById('fft-btn-start').disabled = false;
+            initPlotlyChart();
+        }
+
+        // 文件导入与解析
+        document.getElementById('fft-file-input').addEventListener('change', async function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            document.getElementById('fft-status-label').textContent = "正在执行格式转换与阵列映射...";
+            const defaultSr = parseFloat(document.getElementById('fft-cfg-sr').value) || 2000.0;
+            const ext = file.name.split('.').pop().toLowerCase();
+
+            try {
+                if (ext === 'wav') {
+                    const arrayBuffer = await file.arrayBuffer();
+                    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+                    
+                    fftSampleRate = audioBuffer.sampleRate;
+                    fftCurrentData = [];
+                    fftChannelNames = [];
+                    for (let i = 0; i < audioBuffer.numberOfChannels; i++) {
+                        fftCurrentData.push(audioBuffer.getChannelData(i));
+                        fftChannelNames.push(`Audio_Ch_${i+1}`);
+                    }
+                } else if (ext === 'csv') {
+                    const text = await file.text();
+                    const lines = text.split('\n').filter(line => line.trim() !== '');
+                    const headers = lines[0].split(',').map(h => h.replace(/"/g, '').trim());
+                    
+                    let timeIdx = headers.indexOf('time');
+                    if (timeIdx === -1) timeIdx = headers.indexOf('Time');
+                    
+                    const dataRows = lines.slice(1).map(line => line.split(',').map(val => parseFloat(val)));
+                    
+                    if (timeIdx !== -1) {
+                        const t0 = dataRows[0][timeIdx];
+                        const t1 = dataRows[1][timeIdx];
+                        if (t1 - t0 > 0) fftSampleRate = 1.0 / (t1 - t0);
+                        
+                        fftChannelNames = headers.filter((_, idx) => idx !== timeIdx);
+                        fftCurrentData = fftChannelNames.map(() => new Float64Array(dataRows.length));
+                        
+                        dataRows.forEach((row, rIdx) => {
+                            let chPtr = 0;
+                            row.forEach((val, cIdx) => {
+                                if (cIdx !== timeIdx) {
+                                    fftCurrentData[chPtr][rIdx] = isNaN(val) ? 0 : val;
+                                    chPtr++;
+                                }
+                            });
+                        });
+                    } else {
+                        fftSampleRate = defaultSr;
+                        fftChannelNames = headers.map((_, i) => `CSV_Col_${i+1}`);
+                        fftCurrentData = headers.map(() => new Float64Array(dataRows.length));
+                        dataRows.forEach((row, rIdx) => {
+                            row.forEach((val, cIdx) => {
+                                fftCurrentData[cIdx][rIdx] = isNaN(val) ? 0 : val;
+                            });
+                        });
+                    }
+                } else {
+                    throw new Error("前端受限，目前仅支持完整解析 WAV 与 CSV 结构。");
+                }
+                
+                document.getElementById('fft-cfg-sr').value = fftSampleRate.toFixed(2);
+                document.getElementById('fft-status-label').textContent = `数据装载完毕: ${file.name} | 解析采样率: ${fftSampleRate.toFixed(2)} Hz | 有效解析通道数: ${fftCurrentData.length}`;
+                document.getElementById('fft-btn-start').disabled = false;
+                initPlotlyChart();
+                
+            } catch (err) {
+                document.getElementById('fft-status-label').textContent = `文件解析异常: ${err.message}`;
+            }
+            e.target.value = ''; // Reset input
+        });
+
+        function initPlotlyChart() {
+            const chartDiv = document.getElementById('fft-chart-container');
+            const data = fftChannelNames.map((name, i) => ({
+                x: [], y: [], type: 'scatter', mode: 'lines', name: name,
+                line: { width: 2 }
+            }));
+            const layout = {
+                title: "多通道瞬态频域分布阵列",
+                xaxis: { title: "频率 (Hz)", gridcolor: '#eee' },
+                yaxis: { title: "绝对幅值", gridcolor: '#eee' },
+                margin: { l: 60, r: 20, t: 40, b: 40 },
+                plot_bgcolor: '#fff', paper_bgcolor: '#fff',
+                showlegend: true
+            };
+            Plotly.newPlot(chartDiv, data, layout, {responsive: true, displaylogo: false});
+        }
+
+        // 构造独立的 Web Worker 执行复杂的 FFT 数学计算
+        const fftWorkerScript = `
+            function radix2FFT(real, imag) {
+                let n = real.length;
+                for (let i = 1, j = 0; i < n - 1; i++) {
+                    let bit = n >> 1;
+                    while (j & bit) { j ^= bit; bit >>= 1; }
+                    j ^= bit;
+                    if (i < j) {
+                        let tempR = real[i], tempI = imag[i];
+                        real[i] = real[j]; imag[i] = imag[j];
+                        real[j] = tempR; imag[j] = tempI;
+                    }
+                }
+                for (let len = 2; len <= n; len <<= 1) {
+                    let halfLen = len >> 1;
+                    let angle = -2 * Math.PI / len;
+                    let wRe = Math.cos(angle), wIm = Math.sin(angle);
+                    for (let i = 0; i < n; i += len) {
+                        let uRe = 1, uIm = 0;
+                        for (let j = 0; j < halfLen; j++) {
+                            let idx1 = i + j;
+                            let idx2 = i + j + halfLen;
+                            let tr = real[idx2] * uRe - imag[idx2] * uIm;
+                            let ti = real[idx2] * uIm + imag[idx2] * uRe;
+                            real[idx2] = real[idx1] - tr;
+                            imag[idx2] = imag[idx1] - ti;
+                            real[idx1] += tr;
+                            imag[idx1] += ti;
+                            let nextUre = uRe * wRe - uIm * wIm;
+                            uIm = uRe * wIm + uIm * wRe;
+                            uRe = nextUre;
+                        }
+                    }
+                }
+            }
+
+            self.onmessage = function(e) {
+                const { channelsData, sampleRate, mode } = e.data;
+                const numChannels = channelsData.length;
+                const totalFrames = channelsData[0].length;
+                
+                let chunkSize, overlapRatio, windowFunc, nFft;
+                if (mode === "FAST") {
+                    chunkSize = 1024; overlapRatio = 0.25; nFft = 1024;
+                    // Hamming window
+                    windowFunc = (n, N) => 0.54 - 0.46 * Math.cos(2 * Math.PI * n / (N - 1));
+                } else {
+                    chunkSize = 4096; overlapRatio = 0.85; nFft = 16384;
+                    // Blackman-Harris window
+                    windowFunc = (n, N) => {
+                        const a0 = 0.35875, a1 = 0.48829, a2 = 0.14128, a3 = 0.01168;
+                        const v = 2 * Math.PI * n / (N - 1);
+                        return a0 - a1 * Math.cos(v) + a2 * Math.cos(2 * v) - a3 * Math.cos(3 * v);
+                    };
+                }
+
+                const windowArr = new Float64Array(chunkSize);
+                let windowCoherentGain = 0;
+                for (let i = 0; i < chunkSize; i++) {
+                    windowArr[i] = windowFunc(i, chunkSize);
+                    windowCoherentGain += windowArr[i];
+                }
+
+                const stepSize = Math.floor(chunkSize * (1 - overlapRatio));
+                let currentPos = 0;
+                
+                const processNextChunk = () => {
+                    if (currentPos + chunkSize > totalFrames) {
+                        self.postMessage({ status: 'finished' });
+                        return;
+                    }
+
+                    const positiveFreqCount = Math.floor(nFft / 2) + 1;
+                    const freqs = new Float64Array(positiveFreqCount);
+                    for (let i = 0; i < positiveFreqCount; i++) {
+                        freqs[i] = (i * sampleRate) / nFft;
+                    }
+
+                    const allMags = [];
+                    const domFreqs = [];
+                    const domMags = [];
+
+                    for (let ch = 0; ch < numChannels; ch++) {
+                        const real = new Float64Array(nFft);
+                        const imag = new Float64Array(nFft);
+                        
+                        for (let i = 0; i < chunkSize; i++) {
+                            real[i] = channelsData[ch][currentPos + i] * windowArr[i];
+                        }
+                        
+                        radix2FFT(real, imag);
+                        
+                        const mags = new Float64Array(positiveFreqCount);
+                        let maxMag = -1;
+                        let maxFreq = 0;
+
+                        for (let i = 0; i < positiveFreqCount; i++) {
+                            let mag = Math.sqrt(real[i] * real[i] + imag[i] * imag[i]) / windowCoherentGain;
+                            if (i > 0 && i < positiveFreqCount - 1) mag *= 2; // 补偿负频率部分能量
+                            mags[i] = mag;
+                            if (mag > maxMag) {
+                                maxMag = mag;
+                                maxFreq = freqs[i];
+                            }
+                        }
+                        allMags.push(mags);
+                        domFreqs.push(maxFreq);
+                        domMags.push(maxMag);
+                    }
+
+                    const currentTime = currentPos / sampleRate;
+                    self.postMessage({ status: 'update', currentTime, domFreqs, domMags, freqs, allMags });
+
+                    currentPos += stepSize;
+                    
+                    // 利用 setTimeout 模拟 Python 中的 time.sleep 交出计算资源，避免卡死
+                    const delay = mode === "FAST" ? (stepSize / sampleRate) * 1000 : 10;
+                    setTimeout(processNextChunk, delay);
+                };
+
+                processNextChunk();
+            };
+        `;
+
+        function fftStartAnalysis() {
+            if (!fftCurrentData) return;
+            
+            document.getElementById('fft-btn-load').disabled = true;
+            document.getElementById('fft-btn-generate').disabled = true;
+            document.getElementById('fft-btn-start').disabled = true;
+            document.getElementById('fft-btn-stop').disabled = false;
+
+            const mode = document.getElementById('fft-cfg-mode').value;
+            const workerBlob = new Blob([fftWorkerScript], { type: 'application/javascript' });
+            fftWorker = new Worker(URL.createObjectURL(workerBlob));
+
+            fftWorker.onmessage = function(e) {
+                const data = e.data;
+                if (data.status === 'finished') {
+                    fftStopAnalysis();
+                    return;
+                }
+                
+                if (data.status === 'update') {
+                    const freqStr = data.domFreqs.map(f => f.toFixed(1)).join(", ");
+                    const magStr = data.domMags.map(m => m.toFixed(3)).join(", ");
+                    document.getElementById('fft-status-label').textContent = 
+                        `时间基准: ${data.currentTime.toFixed(3).padStart(6, '0')}s | 阵列主频(Hz): [${freqStr}] | 绝对幅值: [${magStr}]`;
+
+                    const updateTraces = { x: [], y: [] };
+                    const traceIndices = [];
+                    for (let i = 0; i < data.allMags.length; i++) {
+                        updateTraces.x.push(data.freqs);
+                        updateTraces.y.push(data.allMags[i]);
+                        traceIndices.push(i);
+                    }
+                    Plotly.update('fft-chart-container', updateTraces, {}, traceIndices);
+                }
+            };
+
+            fftWorker.postMessage({
+                channelsData: fftCurrentData,
+                sampleRate: fftSampleRate,
+                mode: mode
+            });
+        }
+
+        function fftStopAnalysis() {
+            if (fftWorker) {
+                fftWorker.terminate();
+                fftWorker = null;
+            }
+            const statusLabel = document.getElementById('fft-status-label');
+            if (!statusLabel.textContent.includes('[计算序列挂起]')) {
+                statusLabel.textContent += " [计算序列挂起]";
+            }
+            document.getElementById('fft-btn-load').disabled = false;
+            document.getElementById('fft-btn-generate').disabled = false;
+            document.getElementById('fft-btn-start').disabled = false;
+            document.getElementById('fft-btn-stop').disabled = true;
+        }
+
+    </script>
+</body>
+</html>
